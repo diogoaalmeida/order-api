@@ -8,4 +8,5 @@ import "github.com/diogoaalmeida/order-api/internal/usecase"
 
 type Resolver struct {
 	CreateOrderUseCase usecase.CreateOrderUseCase
+	ListOrdersUseCase  usecase.ListOrdersUseCase
 }
