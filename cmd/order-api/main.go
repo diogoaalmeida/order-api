@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"time"
 
 	graphql_handler "github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/diogoaalmeida/order-api/configs"
 	"github.com/diogoaalmeida/order-api/internal/event/handler"
+	"github.com/diogoaalmeida/order-api/internal/infra/database"
 	"github.com/diogoaalmeida/order-api/internal/infra/graph"
 	"github.com/diogoaalmeida/order-api/internal/infra/grpc/pb"
 	"github.com/diogoaalmeida/order-api/internal/infra/grpc/service"
@@ -21,6 +23,13 @@ import (
 
 	// mysql
 	_ "github.com/go-sql-driver/mysql"
+)
+
+const (
+	dbRetryAttempts       = 15
+	dbRetryDelay          = 2 * time.Second
+	rabbitMQRetryAttempts = 15
+	rabbitMQRetryDelay    = 2 * time.Second
 )
 
 func main() {
@@ -35,7 +44,17 @@ func main() {
 	}
 	defer db.Close()
 
-	rabbitMQChannel := getRabbitMQChannel()
+	fmt.Println("Waiting for database to be ready...")
+	if err := database.WaitForDB(db, dbRetryAttempts, dbRetryDelay); err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Running database migrations...")
+	if err := database.Migrate(db); err != nil {
+		panic(err)
+	}
+
+	rabbitMQChannel := getRabbitMQChannel(configs)
 
 	eventDispatcher := events.NewEventDispatcher()
 	eventDispatcher.Register("OrderCreated", &handler.OrderCreatedHandler{
@@ -75,11 +94,22 @@ func main() {
 	http.ListenAndServe(":"+configs.GraphQLServerPort, nil)
 }
 
-func getRabbitMQChannel() *amqp.Channel {
-	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
-	if err != nil {
-		panic(err)
+func getRabbitMQChannel(cfg *configs.Conf) *amqp.Channel {
+	url := fmt.Sprintf("amqp://%s:%s@%s:%s/", cfg.RabbitMQUser, cfg.RabbitMQPassword, cfg.RabbitMQHost, cfg.RabbitMQPort)
+
+	var conn *amqp.Connection
+	var err error
+	for i := 0; i < rabbitMQRetryAttempts; i++ {
+		conn, err = amqp.Dial(url)
+		if err == nil {
+			break
+		}
+		time.Sleep(rabbitMQRetryDelay)
 	}
+	if err != nil {
+		panic(fmt.Errorf("rabbitmq not reachable after %d attempts: %w", rabbitMQRetryAttempts, err))
+	}
+
 	ch, err := conn.Channel()
 	if err != nil {
 		panic(err)
