@@ -23,7 +23,11 @@ func (suite *OrderRepositoryTestSuite) SetupSuite() {
 	suite.Db = db
 }
 
-func (suite *OrderRepositoryTestSuite) TearDownTest() {
+func (suite *OrderRepositoryTestSuite) SetupTest() {
+	suite.Db.Exec("DELETE FROM orders")
+}
+
+func (suite *OrderRepositoryTestSuite) TearDownSuite() {
 	suite.Db.Close()
 }
 
@@ -48,4 +52,24 @@ func (suite *OrderRepositoryTestSuite) TestGivenAnOrder_WhenSave_ThenShouldSaveO
 	suite.Equal(order.Price, orderResult.Price)
 	suite.Equal(order.Tax, orderResult.Tax)
 	suite.Equal(order.FinalPrice, orderResult.FinalPrice)
+}
+
+func (suite *OrderRepositoryTestSuite) TestGivenOrders_WhenFindAll_ThenShouldReturnAllOrders() {
+	repo := NewOrderRepository(suite.Db)
+
+	order1, err := entity.NewOrder("1", 10.0, 2.0)
+	suite.NoError(err)
+	suite.NoError(order1.CalculateFinalPrice())
+	suite.NoError(repo.Save(order1))
+
+	order2, err := entity.NewOrder("2", 20.0, 4.0)
+	suite.NoError(err)
+	suite.NoError(order2.CalculateFinalPrice())
+	suite.NoError(repo.Save(order2))
+
+	orders, err := repo.FindAll()
+	suite.NoError(err)
+	suite.Len(orders, 2)
+	suite.Equal(*order1, orders[0])
+	suite.Equal(*order2, orders[1])
 }
